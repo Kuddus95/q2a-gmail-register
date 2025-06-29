@@ -1,0 +1,11 @@
+{
+	"name": "q2a Gmail Register",
+	"uri": "https://github.com/Kuddus95/q2a-gmail-register",
+	"description": "A plugin for registration with email code for the users of the forum.",
+	"version": "1.8",
+	"date": "2025-06-30",
+	"author": "Aman", 
+	"author_uri": "http://www.ask-ans.com",
+	"license": "GPLv2",
+	"load_order": "after_db_init"
+}
