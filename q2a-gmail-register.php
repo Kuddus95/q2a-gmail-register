@@ -8,10 +8,6 @@ class q2a_gmail_register
 
     public function process_request($request)
     {
-        require_once QA_INCLUDE_DIR . 'app/users-edit.php';
-        require_once QA_INCLUDE_DIR . 'app/captcha.php';
-        require_once QA_INCLUDE_DIR . 'app/limits.php';
-        require_once QA_INCLUDE_DIR . 'db/users.php';
         require_once QA_INCLUDE_DIR . 'app/emails.php';
 
         if (session_status() === PHP_SESSION_NONE) {
@@ -19,62 +15,34 @@ class q2a_gmail_register
         }
 
         $status_msg = '';
-        $errors = [];
 
-        // Expire email verification after 3 minutes
+        // Expire email verification after 5 minutes
         if (isset($_SESSION['email_verified']) && isset($_SESSION['email_verified_time'])) {
-            if (time() - $_SESSION['email_verified_time'] > 180) {
+            if (time() - $_SESSION['email_verified_time'] > 300) {
                 unset($_SESSION['email_verified']);
                 unset($_SESSION['email_verified_time']);
                 unset($_SESSION['email_code']);
                 unset($_SESSION['verify_email']);
                 unset($_SESSION['email_sent']);
-                $status_msg = 'Time over ! Please input email again';                
+                unset($_SESSION['email_code_time']);
+                $status_msg = 'Time over ! Please input email again';
             }
         }
 
-        $content = qa_content_prepare();
-        $content['title'] = 'New user Registration';
-
-        ob_start();
-
-        // Registration logic
-        if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['register_user'])) {
-            $handle = qa_post_text('handle');
-            $email = qa_post_text('email');
-            $password1 = qa_post_text('password');
-            $password2 = qa_post_text('password2');
-
-            if (!qa_check_form_security_code('register', qa_post_text('code'))) {
-                $status_msg = '❌ Email code wrong !';
-            } elseif ($password1 !== $password2) {
-                $status_msg = '❌ Password does not match !';
-            } else {
-                if (!preg_match('/^[a-zA-Z0-9._%+-]+@gmail\.com$/', $email)) {
-                    $errors['email'] = 'Only Gmail is acceptable.';
-                }
-
-                if (!isset($_POST['terms'])) {
-                    $errors['terms'] = 'You have to be agreed to Terms.';
-                }
-
-                $errors = array_merge(
-                    $errors,
-                    qa_handle_email_filter($handle, $email),
-                    qa_password_validate($password1)
-                );
-
-                if (empty($errors)) {
-                    $userid = qa_create_new_user($email, $password1, $handle);
-                    
-                    //set flags to 1 and clear emailcode
-                    qa_db_query_sub('UPDATE ^users SET flags = #, emailcode = "" WHERE userid = #', 1, $userid);
-
-                    qa_set_logged_in_user($userid, $handle);
-                    session_destroy();
-                    qa_redirect('');
-                }
+        // Expire sent code after 5 minutes if not verified
+        if (isset($_SESSION['email_sent']) && !isset($_SESSION['email_verified'])) {
+            if (time() - ($_SESSION['email_code_time'] ?? 0) > 300) {
+                unset($_SESSION['email_code']);
+                unset($_SESSION['verify_email']);
+                unset($_SESSION['email_sent']);
+                unset($_SESSION['email_code_time']);
+                $status_msg = 'Time over ! Please input email again';
             }
+        }
+
+        // Already verified -> go to the main register page
+        if (!empty($_SESSION['email_verified'])) {
+            qa_redirect('register');
         }
 
         // Send verification code
@@ -88,16 +56,13 @@ class q2a_gmail_register
                 $_SESSION['verify_email'] = $email;
                 $_SESSION['email_code_time'] = time();
 
-                $subject = 'Your Email Code';
-                $body = "Your verification code: $code";
-
                 $params = [
                     'fromemail' => qa_opt('from_email'),
                     'fromname' => qa_opt('site_title'),
                     'toemail' => $email,
                     'toname' => '',
-                    'subject' => $subject,
-                    'body' => $body,
+                    'subject' => 'Your Email Code',
+                    'body' => "Your verification code: $code. Please use this code for new user registration immediately.",
                     'html' => false,
                 ];
 
@@ -110,16 +75,21 @@ class q2a_gmail_register
             }
         }
 
-        // Verify submitted code
+        // Verify submitted code -> redirect to the main register page
         if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['verify_code'])) {
             if ($_POST['email_code'] == ($_SESSION['email_code'] ?? '')) {
                 $_SESSION['email_verified'] = true;
                 $_SESSION['email_verified_time'] = time();
-                $status_msg = 'Email verified successfully !';
+                qa_redirect('register');
             } else {
                 $status_msg = '❌ Your code is wrong !';
             }
         }
+
+        $content = qa_content_prepare();
+        $content['title'] = 'New user Registration';
+
+        ob_start();
 ?>
 
 <style>
@@ -145,55 +115,16 @@ class q2a_gmail_register
     <p style="color: green; font-weight: bold;"><?= qa_html($status_msg) ?></p>
 <?php endif; ?>
 
-<?php if (!isset($_SESSION['email_verified'])) : ?>
-
-    <?php if (!isset($_SESSION['email_sent'])) : ?>
-        <form method="post">
-            <input type="email" name="email" class="qa-form-tall-text" placeholder="Write your Gmail" required>
-            <button type="submit" name="send_email" class="qa-form-tall-button">Send Code</button>
-        </form>
-    <?php else : ?>
-        <form method="post">
-            <input type="text" name="email_code" class="qa-form-tall-text" placeholder="Write email code" maxlength="6" required>
-            <button type="submit" name="verify_code" class="qa-form-tall-button">Verify</button>
-        </form>
-    <?php endif; ?>
-
-<?php else : ?>
-
-    <p style="color: red;">Fill up the form carefully and Register.</p>
-
+<?php if (!isset($_SESSION['email_sent'])) : ?>
     <form method="post">
-        <label for="handle">User Name:</label>
-        <input type="text" name="handle" class="qa-form-tall-text" required>
-
-        <label for="email">Email:</label>
-        <input type="email" name="email" class="qa-form-tall-text" readonly value="<?= qa_html($_SESSION['verify_email']) ?>">
-
-        <label for="password">Password:</label>
-        <input type="password" name="password" class="qa-form-tall-text" required>
-
-        <label for="password2">Password again:</label>
-        <input type="password" name="password2" class="qa-form-tall-text" required>
-
-        <div style="margin-bottom: 10px;">
-            <label><input type="checkbox" name="terms"> <?= qa_opt('register_terms') ?></label>
-        </div>
-
-        <input type="hidden" name="register_user" value="1">
-        <input type="hidden" name="code" value="<?= qa_get_form_security_code('register') ?>">
-
-        <input type="submit" value="Register" class="qa-form-tall-button">
+        <input type="email" name="email" class="qa-form-tall-text" placeholder="Write your Gmail" required>
+        <button type="submit" name="send_email" class="qa-form-tall-button">Send Code</button>
     </form>
-
-<?php endif; ?>
-
-<?php if (!empty($errors)) : ?>
-    <ul style="color: red;">
-        <?php foreach ($errors as $err) : ?>
-            <li><?= qa_html($err) ?></li>
-        <?php endforeach; ?>
-    </ul>
+<?php else : ?>
+    <form method="post">
+        <input type="text" name="email_code" class="qa-form-tall-text" placeholder="Write email code" maxlength="6" required>
+        <button type="submit" name="verify_code" class="qa-form-tall-button">Verify</button>
+    </form>
 <?php endif; ?>
 
 <?php
